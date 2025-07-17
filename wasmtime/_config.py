@@ -1,6 +1,7 @@
 from . import _ffi as ffi
 from ctypes import *
-from wasmtime import WasmtimeError
+import ctypes
+from wasmtime import WasmtimeError, Managed
 import typing
 
 
@@ -12,7 +13,7 @@ def setter_property(fset: typing.Callable) -> property:
     return prop
 
 
-class Config:
+class Config(Managed["ctypes._Pointer[ffi.wasm_config_t]"]):
     """
     Global configuration, used to create an `Engine`.
 
@@ -21,7 +22,10 @@ class Config:
     """
 
     def __init__(self) -> None:
-        self._ptr = ffi.wasm_config_new()
+        self._set_ptr(ffi.wasm_config_new())
+
+    def _delete(self, ptr: "ctypes._Pointer[ffi.wasm_config_t]") -> None:
+        ffi.wasm_config_delete(ptr)
 
     @setter_property
     def debug_info(self, enable: bool) -> None:
@@ -32,7 +36,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_debug_info_set(self._ptr, enable)
+        ffi.wasmtime_config_debug_info_set(self.ptr(), enable)
 
     @setter_property
     def wasm_threads(self, enable: bool) -> None:
@@ -44,7 +48,19 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_threads_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_threads_set(self.ptr(), enable)
+
+    @setter_property
+    def wasm_tail_call(self, enable: bool) -> None:
+        """
+        Configures whether the wasm [tail call proposal] is enabled.
+
+        [tail call proposal]: https://github.com/WebAssembly/tail-call
+        """
+
+        if not isinstance(enable, bool):
+            raise TypeError('expected a bool')
+        ffi.wasmtime_config_wasm_tail_call_set(self.ptr(), enable)
 
     @setter_property
     def wasm_reference_types(self, enable: bool) -> None:
@@ -56,7 +72,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_reference_types_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_reference_types_set(self.ptr(), enable)
 
     @setter_property
     def wasm_simd(self, enable: bool) -> None:
@@ -68,7 +84,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_simd_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_simd_set(self.ptr(), enable)
 
     @setter_property
     def wasm_bulk_memory(self, enable: bool) -> None:
@@ -80,7 +96,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_bulk_memory_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_bulk_memory_set(self.ptr(), enable)
 
     @setter_property
     def wasm_multi_value(self, enable: bool) -> None:
@@ -92,19 +108,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_multi_value_set(self._ptr, enable)
-
-    @setter_property
-    def wasm_module_linking(self, enable: bool) -> None:
-        """
-        Configures whether the wasm [module linking proposal] is enabled.
-
-        [module linking proposal]: https://github.com/webassembly/module-linking
-        """
-
-        if not isinstance(enable, bool):
-            raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_module_linking_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_multi_value_set(self.ptr(), enable)
 
     @setter_property
     def wasm_multi_memory(self, enable: bool) -> None:
@@ -116,7 +120,7 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_multi_memory_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_multi_memory_set(self.ptr(), enable)
 
     @setter_property
     def wasm_memory64(self, enable: bool) -> None:
@@ -128,7 +132,33 @@ class Config:
 
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_wasm_memory64_set(self._ptr, enable)
+        ffi.wasmtime_config_wasm_memory64_set(self.ptr(), enable)
+
+    @setter_property
+    def wasm_relaxed_simd(self, enable: bool) -> None:
+        """
+        Configures whether the wasm [relaxed simd proposal] is enabled.
+
+        [relaxed simd proposal]: https://github.com/webassembly/relaxed-simd
+        """
+
+        if not isinstance(enable, bool):
+            raise TypeError('expected a bool')
+        ffi.wasmtime_config_wasm_relaxed_simd_set(self.ptr(), enable)
+
+    @setter_property
+    def wasm_relaxed_simd_deterministic(self, enable: bool) -> None:
+        """
+        Configures whether the wasm [relaxed simd proposal] is deterministic
+        in is execution as opposed to having the most optimal implementation for
+        the current platform.
+
+        [relaxed simd proposal]: https://github.com/webassembly/relaxed-simd
+        """
+
+        if not isinstance(enable, bool):
+            raise TypeError('expected a bool')
+        ffi.wasmtime_config_wasm_relaxed_simd_deterministic_set(self.ptr(), enable)
 
     @setter_property
     def strategy(self, strategy: str) -> None:
@@ -142,41 +172,37 @@ class Config:
         """
 
         if strategy == "auto":
-            error = ffi.wasmtime_config_strategy_set(self._ptr, 0)
+            ffi.wasmtime_config_strategy_set(self.ptr(), 0)
         elif strategy == "cranelift":
-            error = ffi.wasmtime_config_strategy_set(self._ptr, 1)
+            ffi.wasmtime_config_strategy_set(self.ptr(), 1)
         else:
             raise WasmtimeError("unknown strategy: " + str(strategy))
-        if error:
-            raise WasmtimeError._from_ptr(error)
 
     @setter_property
     def cranelift_debug_verifier(self, enable: bool) -> None:
         if not isinstance(enable, bool):
             raise TypeError('expected a bool')
-        ffi.wasmtime_config_cranelift_debug_verifier_set(self._ptr, enable)
+        ffi.wasmtime_config_cranelift_debug_verifier_set(self.ptr(), enable)
 
     @setter_property
     def cranelift_opt_level(self, opt_level: str) -> None:
         if opt_level == "none":
-            ffi.wasmtime_config_cranelift_opt_level_set(self._ptr, 0)
+            ffi.wasmtime_config_cranelift_opt_level_set(self.ptr(), 0)
         elif opt_level == "speed":
-            ffi.wasmtime_config_cranelift_opt_level_set(self._ptr, 1)
+            ffi.wasmtime_config_cranelift_opt_level_set(self.ptr(), 1)
         elif opt_level == "speed_and_size":
-            ffi.wasmtime_config_cranelift_opt_level_set(self._ptr, 2)
+            ffi.wasmtime_config_cranelift_opt_level_set(self.ptr(), 2)
         else:
             raise WasmtimeError("unknown opt level: " + str(opt_level))
 
     @setter_property
     def profiler(self, profiler: str) -> None:
         if profiler == "none":
-            error = ffi.wasmtime_config_profiler_set(self._ptr, 0)
+            ffi.wasmtime_config_profiler_set(self.ptr(), 0)
         elif profiler == "jitdump":
-            error = ffi.wasmtime_config_profiler_set(self._ptr, 1)
+            ffi.wasmtime_config_profiler_set(self.ptr(), 1)
         else:
             raise WasmtimeError("unknown profiler: " + str(profiler))
-        if error:
-            raise WasmtimeError._from_ptr(error)
 
     @setter_property
     def cache(self, enabled: typing.Union[bool, str]) -> None:
@@ -194,9 +220,9 @@ class Config:
         if isinstance(enabled, bool):
             if not enabled:
                 raise WasmtimeError("caching cannot be explicitly disabled")
-            error = ffi.wasmtime_config_cache_config_load(self._ptr, None)
+            error = ffi.wasmtime_config_cache_config_load(self.ptr(), None)
         elif isinstance(enabled, str):
-            error = ffi.wasmtime_config_cache_config_load(self._ptr,
+            error = ffi.wasmtime_config_cache_config_load(self.ptr(),
                                                           c_char_p(enabled.encode('utf-8')))
         else:
             raise TypeError("expected string or bool")
@@ -204,17 +230,17 @@ class Config:
             raise WasmtimeError._from_ptr(error)
 
     @setter_property
-    def interruptable(self, enabled: bool) -> None:
+    def epoch_interruption(self, enabled: bool) -> None:
         """
-        Configures whether wasm execution can be interrupted via interrupt
-        handles.
+        Configures whether wasm execution can be interrupted via epoch
+        increments.
         """
 
         if enabled:
             val = 1
         else:
             val = 0
-        ffi.wasmtime_config_interruptable_set(self._ptr, val)
+        ffi.wasmtime_config_epoch_interruption_set(self.ptr(), val)
 
     @setter_property
     def consume_fuel(self, instances: bool) -> None:
@@ -227,8 +253,16 @@ class Config:
         """
         if not isinstance(instances, bool):
             raise TypeError('expected an bool')
-        ffi.wasmtime_config_consume_fuel_set(self._ptr, instances)
+        ffi.wasmtime_config_consume_fuel_set(self.ptr(), instances)
 
-    def __del__(self) -> None:
-        if hasattr(self, '_ptr'):
-            ffi.wasm_config_delete(self._ptr)
+    @setter_property
+    def parallel_compilation(self, enable: bool) -> None:
+        """
+        Configures whether parallel compilation is enabled for functions
+        within a module.
+
+        This is enabled by default.
+        """
+        if not isinstance(enable, bool):
+            raise TypeError('expected a bool')
+        ffi.wasmtime_config_parallel_compilation_set(self.ptr(), enable)

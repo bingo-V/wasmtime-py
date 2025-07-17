@@ -1,33 +1,40 @@
 from ctypes import *
-import os
+from pathlib import Path
+import ctypes
 import sys
 import platform
 import typing
 
-from wasmtime import WasmtimeError
-
 if sys.maxsize <= 2**32:
-    raise WasmtimeError("wasmtime only works on 64-bit platforms right now")
+    raise RuntimeError("wasmtime only works on 64-bit platforms right now")
 
-if sys.platform == 'linux':
+sys_platform = sys.platform
+
+# For Python versions <=3.12. 3.13+ supports PEP 738 and uses sys.platform
+if hasattr(sys, 'getandroidapilevel'):
+    sys_platform = 'android'
+
+if sys_platform == 'linux' or sys_platform == 'android':
     libname = '_libwasmtime.so'
-elif sys.platform == 'win32':
+elif sys_platform == 'win32':
     libname = '_wasmtime.dll'
-elif sys.platform == 'darwin':
+elif sys_platform == 'darwin':
     libname = '_libwasmtime.dylib'
 else:
-    raise RuntimeError("unsupported platform `{}` for wasmtime".format(sys.platform))
+    raise RuntimeError("unsupported platform `{}` for wasmtime".format(sys_platform))
+
 
 machine = platform.machine()
 if machine == 'AMD64':
     machine = 'x86_64'
+if machine == 'arm64' or machine == 'ARM64':
+    machine = 'aarch64'
 if machine != 'x86_64' and machine != 'aarch64':
     raise RuntimeError("unsupported architecture for wasmtime: {}".format(machine))
 
-filename = os.path.join(os.path.dirname(__file__), sys.platform + '-' + machine, libname)
-if not os.path.exists(filename):
-    raise RuntimeError("precompiled wasmtime binary not found at `{}`".format(filename))
-dll = cdll.LoadLibrary(filename)
+filename = Path(__file__).parent / (sys_platform + '-' + machine) / libname
+
+dll = cdll.LoadLibrary(str(filename))
 
 WASM_I32 = c_uint8(0)
 WASM_I64 = c_uint8(1)
@@ -52,6 +59,7 @@ WASMTIME_EXTERN_FUNC = c_uint8(0)
 WASMTIME_EXTERN_GLOBAL = c_uint8(1)
 WASMTIME_EXTERN_TABLE = c_uint8(2)
 WASMTIME_EXTERN_MEMORY = c_uint8(3)
+WASMTIME_EXTERN_SHAREDMEMORY = c_uint8(4)
 WASMTIME_EXTERN_INSTANCE = c_uint8(4)
 WASMTIME_EXTERN_MODULE = c_uint8(5)
 
@@ -75,7 +83,7 @@ class wasm_val_union(Union):
     i64: int
     f32: float
     f64: float
-    ref: "typing.Union[pointer[wasm_ref_t], None]"
+    ref: "typing.Union[ctypes._Pointer[wasm_ref_t], None]"
 
 
 class wasm_val_t(Structure):
@@ -97,7 +105,7 @@ def to_str(vec: wasm_byte_vec_t) -> str:
     return to_bytes(vec).decode("utf-8")
 
 
-def to_str_raw(ptr: pointer, size: int) -> str:
+def to_str_raw(ptr: "ctypes._Pointer", size: int) -> str:
     return string_at(ptr, size).decode("utf-8")
 
 

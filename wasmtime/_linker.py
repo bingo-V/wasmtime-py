@@ -1,6 +1,8 @@
+import ctypes
 from ctypes import *
+from typing import Any
 from wasmtime import Instance, Engine, FuncType
-from wasmtime import Module, WasmtimeError, Func
+from wasmtime import Module, WasmtimeError, Func, Managed
 from . import _ffi as ffi
 from ._extern import get_extern_ptr, wrap_extern
 from ._config import setter_property
@@ -10,7 +12,7 @@ from ._func import enter_wasm, trampoline, FUNCTIONS, finalize
 from typing import Callable
 
 
-class Linker:
+class Linker(Managed["ctypes._Pointer[ffi.wasmtime_linker_t]"]):
     engine: Engine
 
     def __init__(self, engine: Engine):
@@ -18,8 +20,11 @@ class Linker:
         Creates a new linker ready to instantiate modules within the store
         provided.
         """
-        self._ptr = ffi.wasmtime_linker_new(engine._ptr)
+        self._set_ptr(ffi.wasmtime_linker_new(engine.ptr()))
         self.engine = engine
+
+    def _delete(self, ptr: "ctypes._Pointer[ffi.wasmtime_linker_t]") -> None:
+        ffi.wasmtime_linker_delete(ptr)
 
     @setter_property
     def allow_shadowing(self, allow: bool) -> None:
@@ -29,9 +34,9 @@ class Linker:
         """
         if not isinstance(allow, bool):
             raise TypeError("expected a boolean")
-        ffi.wasmtime_linker_allow_shadowing(self._ptr, allow)
+        ffi.wasmtime_linker_allow_shadowing(self.ptr(), allow)
 
-    def define(self, module: str, name: str, item: AsExtern) -> None:
+    def define(self, store: Storelike, module: str, name: str, item: AsExtern) -> None:
         """
         Defines a new item, by name, in this linker.
 
@@ -48,7 +53,8 @@ class Linker:
         name_bytes = name.encode('utf-8')
         name_buf = create_string_buffer(name_bytes)
         error = ffi.wasmtime_linker_define(
-            self._ptr,
+            self.ptr(),
+            store._context(),
             module_buf,
             len(module_bytes),
             name_buf,
@@ -57,7 +63,7 @@ class Linker:
         if error:
             raise WasmtimeError._from_ptr(error)
 
-    def define_func(self, module: str, name: str, ty: FuncType, func: Callable, access_caller: bool = False) -> None:
+    def define_func(self, module: str, name: str, ty: FuncType, func: Callable[..., Any], access_caller: bool = False) -> None:
         """
         Defines a new function, by name, in this linker.
 
@@ -74,12 +80,12 @@ class Linker:
             raise TypeError("expected a FuncType")
         idx = FUNCTIONS.allocate((func, ty.results, access_caller))
         error = ffi.wasmtime_linker_define_func(
-            self._ptr,
+            self.ptr(),
             module_buf,
             len(module_bytes),
             name_buf,
             len(name_bytes),
-            ty._ptr,
+            ty.ptr(),
             trampoline,
             idx,
             finalize)
@@ -101,8 +107,8 @@ class Linker:
             raise TypeError("expected an `Instance`")
         name_bytes = name.encode('utf8')
         name_buf = create_string_buffer(name_bytes)
-        error = ffi.wasmtime_linker_define_instance(self._ptr,
-                                                    store._context,
+        error = ffi.wasmtime_linker_define_instance(self.ptr(),
+                                                    store._context(),
                                                     name_buf,
                                                     len(name_bytes),
                                                     byref(instance._instance))
@@ -120,7 +126,7 @@ class Linker:
         This function will raise an error if shadowing is disallowed and a name
         was previously defined.
         """
-        error = ffi.wasmtime_linker_define_wasi(self._ptr)
+        error = ffi.wasmtime_linker_define_wasi(self.ptr())
         if error:
             raise WasmtimeError._from_ptr(error)
 
@@ -141,7 +147,7 @@ class Linker:
             raise TypeError("expected a `Module`")
         name_bytes = name.encode('utf-8')
         name_buf = create_string_buffer(name_bytes)
-        error = ffi.wasmtime_linker_module(self._ptr, store._context, name_buf, len(name_bytes), module._ptr)
+        error = ffi.wasmtime_linker_module(self.ptr(), store._context(), name_buf, len(name_bytes), module.ptr())
         if error:
             raise WasmtimeError._from_ptr(error)
 
@@ -160,7 +166,7 @@ class Linker:
         instance = ffi.wasmtime_instance_t()
         with enter_wasm(store) as trap:
             error = ffi.wasmtime_linker_instantiate(
-                self._ptr, store._context, module._ptr, byref(instance), trap)
+                self.ptr(), store._context(), module.ptr(), byref(instance), trap)
             if error:
                 raise WasmtimeError._from_ptr(error)
         return Instance._from_raw(instance)
@@ -177,7 +183,7 @@ class Linker:
         name_bytes = name.encode('utf-8')
         name_buf = create_string_buffer(name_bytes)
         func = ffi.wasmtime_func_t()
-        error = ffi.wasmtime_linker_get_default(self._ptr, store._context,
+        error = ffi.wasmtime_linker_get_default(self.ptr(), store._context(),
                                                 name_buf, len(name_bytes), byref(func))
         if error:
             raise WasmtimeError._from_ptr(error)
@@ -195,14 +201,10 @@ class Linker:
         name_bytes = name.encode('utf-8')
         name_buf = create_string_buffer(name_bytes)
         item = ffi.wasmtime_extern_t()
-        ok = ffi.wasmtime_linker_get(self._ptr, store._context,
+        ok = ffi.wasmtime_linker_get(self.ptr(), store._context(),
                                      module_buf, len(module_bytes),
                                      name_buf, len(name_bytes),
                                      byref(item))
         if ok:
             return wrap_extern(item)
         raise WasmtimeError("item not defined in linker")
-
-    def __del__(self) -> None:
-        if hasattr(self, '_ptr'):
-            ffi.wasmtime_linker_delete(self._ptr)

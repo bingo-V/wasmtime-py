@@ -13,23 +13,25 @@ free to consult that documentation as well. While not exactly the same the two
 libraries are intended to be quite similar.
 """
 
-from ._error import WasmtimeError
+from ._managed import Managed
+from ._error import WasmtimeError, ExitTrap
 from ._config import Config
 from ._engine import Engine
 from ._store import Store, Storelike
 from ._types import FuncType, GlobalType, MemoryType, TableType
-from ._types import ValType, Limits, ImportType, ExportType, ModuleType, InstanceType
+from ._types import ValType, Limits, ImportType, ExportType
 from ._wat2wasm import wat2wasm
 from ._module import Module
-from ._value import Val, IntoVal
-from ._trap import Trap, Frame, ExitTrap, TrapCode
+from ._value import Val
+from ._trap import Trap, Frame, TrapCode
 from ._func import Func, Caller
 from ._globals import Global
 from ._table import Table
 from ._memory import Memory
 from ._instance import Instance
-from ._wasi import WasiConfig
+from ._wasi import WasiConfig, FilePerms, DirPerms
 from ._linker import Linker
+from ._sharedmemory import SharedMemory
 
 __all__ = [
     'wat2wasm',
@@ -44,12 +46,12 @@ __all__ = [
     'Limits',
     'ImportType',
     'ExportType',
-    'IntoVal',
     'Val',
     'Func',
     'Caller',
     'Table',
     'Memory',
+    'SharedMemory',
     'Global',
     'Trap',
     'TrapCode',
@@ -58,6 +60,8 @@ __all__ = [
     'Module',
     'Instance',
     'WasiConfig',
+    'FilePerms',
+    'DirPerms',
     'Linker',
     'WasmtimeError',
 ]

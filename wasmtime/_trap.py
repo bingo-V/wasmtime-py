@@ -1,7 +1,9 @@
 from . import _ffi as ffi
 from enum import Enum
-from ctypes import byref, POINTER, pointer, c_int
+from ctypes import byref, POINTER
+import ctypes
 from typing import Optional, Any, List
+from wasmtime import Managed
 
 
 class TrapCode(Enum):
@@ -29,29 +31,26 @@ class TrapCode(Enum):
     INTERRUPT = 10
 
 
-class Trap(Exception):
+class Trap(Exception, Managed["ctypes._Pointer[ffi.wasm_trap_t]"]):
+
     def __init__(self, message: str):
         """
         Creates a new trap with the given `message`
         """
 
         vec = message.encode('utf-8')
-        self._ptr = ffi.wasmtime_trap_new(ffi.create_string_buffer(vec), len(vec))
+        self._set_ptr(ffi.wasmtime_trap_new(ffi.create_string_buffer(vec), len(vec)))
+
+    def _delete(self, ptr: "ctypes._Pointer[ffi.wasm_trap_t]") -> None:
+        ffi.wasm_trap_delete(ptr)
 
     @classmethod
-    def _from_ptr(cls, ptr: "pointer[ffi.wasm_trap_t]") -> "Trap":
+    def _from_ptr(cls, ptr: "ctypes._Pointer[ffi.wasm_trap_t]") -> "Trap":
         if not isinstance(ptr, POINTER(ffi.wasm_trap_t)):
             raise TypeError("wrong pointer type")
-        exit_code = c_int(0)
-        if ffi.wasmtime_trap_exit_status(ptr, byref(exit_code)):
-            exit_trap: ExitTrap = ExitTrap.__new__(ExitTrap)
-            exit_trap._ptr = ptr
-            exit_trap.code = exit_code.value
-            return exit_trap
-        else:
-            trap: Trap = cls.__new__(cls)
-            trap._ptr = ptr
-            return trap
+        trap: Trap = cls.__new__(cls)
+        trap._set_ptr(ptr)
+        return trap
 
     @property
     def message(self) -> str:
@@ -60,7 +59,7 @@ class Trap(Exception):
         """
 
         message = ffi.wasm_byte_vec_t()
-        ffi.wasm_trap_message(self._ptr, byref(message))
+        ffi.wasm_trap_message(self.ptr(), byref(message))
         # subtract one to chop off the trailing nul byte
         message.size -= 1
         ret = ffi.to_str(message)
@@ -70,8 +69,8 @@ class Trap(Exception):
 
     @property
     def frames(self) -> List["Frame"]:
-        frames = FrameList()
-        ffi.wasm_trap_trace(self._ptr, byref(frames.vec))
+        frames = FrameList(self)
+        ffi.wasm_trap_trace(self.ptr(), byref(frames.vec))
         ret = []
         for i in range(0, frames.vec.size):
             ret.append(Frame._from_ptr(frames.vec.data[i], frames))
@@ -87,47 +86,29 @@ class Trap(Exception):
         not have an associated code with them.
         """
         code = ffi.wasmtime_trap_code_t()
-        if ffi.wasmtime_trap_code(self._ptr, byref(code)):
+        if ffi.wasmtime_trap_code(self.ptr(), byref(code)):
             return TrapCode(code.value)
         return None
 
     def __str__(self) -> str:
         return self.message
 
-    def __del__(self) -> None:
-        if hasattr(self, '_ptr'):
-            ffi.wasm_trap_delete(self._ptr)
 
-
-class ExitTrap(Trap):
-    """
-    A special type of `Trap` which represents the process exiting via WASI's
-    `proc_exit` function call.
-
-    Whenever a WASI program exits via `proc_exit` a trap is raised, but the
-    trap will have this type instead of `Trap`, so you can catch just this
-    type instead of all traps (if desired). Exit traps have a `code` associated
-    with them which is the exit code provided at exit.
-
-    Note that `ExitTrap` is a subclass of `Trap`, so if you catch a trap you'll
-    also catch `ExitTrap`.
-    """
-    code: int
-    pass
-
-
-class Frame:
-    _ptr: "pointer[ffi.wasm_frame_t]"
+class Frame(Managed["ctypes._Pointer[ffi.wasm_frame_t]"]):
     _owner: Optional[Any]
 
     @classmethod
-    def _from_ptr(cls, ptr: "pointer[ffi.wasm_frame_t]", owner: Optional[Any]) -> "Frame":
-        ty: "Frame" = cls.__new__(cls)
+    def _from_ptr(cls, ptr: "ctypes._Pointer[ffi.wasm_frame_t]", owner: Optional[Any]) -> "Frame":
         if not isinstance(ptr, POINTER(ffi.wasm_frame_t)):
             raise TypeError("wrong pointer type")
-        ty._ptr = ptr
+        ty: "Frame" = cls.__new__(cls)
+        ty._set_ptr(ptr)
         ty._owner = owner
         return ty
+
+    def _delete(self, ptr: "ctypes._Pointer[ffi.wasm_frame_t]") -> None:
+        if self._owner is None:
+            ffi.wasm_frame_delete(ptr)
 
     @property
     def func_index(self) -> int:
@@ -135,7 +116,7 @@ class Frame:
         Returns the function index this frame corresponds to in its wasm module
         """
 
-        return ffi.wasm_frame_func_index(self._ptr)
+        return ffi.wasm_frame_func_index(self.ptr())
 
     @property
     def func_name(self) -> Optional[str]:
@@ -145,7 +126,7 @@ class Frame:
         May return `None` if no name can be inferred
         """
 
-        ptr = ffi.wasmtime_frame_func_name(self._ptr)
+        ptr = ffi.wasmtime_frame_func_name(self.ptr())
         if ptr:
             return ffi.to_str(ptr.contents)
         else:
@@ -159,7 +140,7 @@ class Frame:
         May return `None` if no name can be inferred
         """
 
-        ptr = ffi.wasmtime_frame_module_name(self._ptr)
+        ptr = ffi.wasmtime_frame_module_name(self.ptr())
         if ptr:
             return ffi.to_str(ptr.contents)
         else:
@@ -172,7 +153,7 @@ class Frame:
         wasm source module.
         """
 
-        return ffi.wasm_frame_module_offset(self._ptr)
+        return ffi.wasm_frame_module_offset(self.ptr())
 
     @property
     def func_offset(self) -> int:
@@ -181,16 +162,15 @@ class Frame:
         wasm function.
         """
 
-        return ffi.wasm_frame_func_offset(self._ptr)
-
-    def __del__(self) -> None:
-        if self._owner is None:
-            ffi.wasm_frame_delete(self._ptr)
+        return ffi.wasm_frame_func_offset(self.ptr())
 
 
 class FrameList:
-    def __init__(self) -> None:
+    owner: Any
+
+    def __init__(self, owner: Any) -> None:
         self.vec = ffi.wasm_frame_vec_t(0, None)
+        self.owner = owner
 
     def __del__(self) -> None:
         ffi.wasm_frame_vec_delete(byref(self.vec))
